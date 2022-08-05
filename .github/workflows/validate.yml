@@ -1,0 +1,245 @@
+name: Validate
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches: [master]
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+      - "xmake.lua"
+  push:
+    branches: [master]
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+      - "xmake.lua"
+
+jobs:
+  cancel-old-build:
+    name: Cancel previous builds
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Cancel Previous Runs
+        if: ${{ github.ref_name != 'master'}}
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ github.token }}
+
+  clang-format:
+    needs: cancel-old-build
+    name: Check clang-format
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: clang-format
+        uses: jidicula/clang-format-action@v4.6.2
+        with:
+          clang-format-version: "13"
+          check-path: "."
+          exclude-regex: (.*thirdparty.*)
+
+  windows-build:
+    needs: cancel-old-build
+    name: Build & Test Windows
+    runs-on: windows-latest
+    if: "!contains(toJSON(github.event.commits.*.message), '[SKIP VALIDATE BUILD]')"
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        config:
+          - "debug"
+          - "release"
+        arch:
+          - "x64"
+    env:
+      VCPKG_VERSION: 2022.03.10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: 2.6.4
+
+      - name: Installing vcpkg
+        run: |
+          git clone -b ${{env.VCPKG_VERSION}} --single-branch https://github.com/Microsoft/vcpkg.git .vcpkg
+          cd .vcpkg
+          .\bootstrap-vcpkg.bat
+          .\vcpkg.exe integrate install
+          cd ..
+      - name: Cache vcpkg
+        uses: actions/cache@v2
+        with:
+          path: |
+            ${{ github.workspace }}\.vcpkg\installed
+          key: ${{ runner.os }}-${{ matrix.config }}-${{env.VCPKG_VERSION}}-${{ hashFiles('xmake.lua') }}-${{ matrix.arch }}-v5
+
+      - name: Bundle
+        if: ${{ github.ref_name == 'master' && matrix.config == 'release' }}
+        run: |
+          xmake bundle -v -y
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+      - name: Upload template-app-win64
+        if: ${{ github.ref_name == 'master' && matrix.config == 'release' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: template-app-win64
+          path: build/template-app-win64.zip
+
+      - name: Config
+        run: |
+          xmake config -v -y -m ${{ matrix.config }} --arch=${{ matrix.arch }}
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+      - name: Build & Test
+        run: |
+          xmake test -v -y
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+  linux-build:
+    needs: cancel-old-build
+    name: Build & Test Linux
+    runs-on: ubuntu-latest
+    if: "!contains(toJSON(github.event.commits.*.message), '[SKIP VALIDATE BUILD]')"
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        config:
+          - "debug"
+          - "release"
+        arch:
+          - "x86_64"
+    env:
+      VCPKG_VERSION: 2022.03.10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Set up GCC 11
+        uses: egor-tensin/setup-gcc@v1
+        with:
+          version: 11
+          platform: x64
+
+      - name: Setup xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: 2.6.4
+
+      - name: Installing vcpkg
+        run: |
+          git clone -b ${{env.VCPKG_VERSION}} --single-branch https://github.com/Microsoft/vcpkg.git .vcpkg
+          cd .vcpkg
+          ./bootstrap-vcpkg.sh
+          cd ..
+      - name: Cache vcpkg
+        uses: actions/cache@v2
+        with:
+          path: |
+            ${{ github.workspace }}/.vcpkg/installed
+          key: ${{ runner.os }}-${{ matrix.config }}-${{env.VCPKG_VERSION}}-${{ hashFiles('xmake.lua') }}-${{ matrix.arch }}-v5
+
+      - name: Bundle
+        if: ${{ github.ref_name == 'master' && matrix.config == 'release' }}
+        run: |
+          xmake bundle -v -y
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+      - name: Upload template-app-linux
+        if: ${{ github.ref_name == 'master' && matrix.config == 'release' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: template-app-linux
+          path: build/template-app-linux.zip
+
+      - name: Config
+        run: |
+          xmake config -v -y -m ${{ matrix.config }} --arch=${{ matrix.arch }}
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+      - name: Build & Test
+        run: |
+          xmake test -v -y
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+  macos-build:
+    needs: cancel-old-build
+    name: Build & Test MacOS
+    runs-on: macos-latest
+    if: "!contains(toJSON(github.event.commits.*.message), '[SKIP VALIDATE BUILD]')"
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        config:
+          - "debug"
+          - "release"
+        arch:
+          - "x86_64"
+    env:
+      VCPKG_VERSION: 2022.03.10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup xmake
+        uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: 2.6.4
+
+      - name: Installing vcpkg
+        run: |
+          git clone -b ${{env.VCPKG_VERSION}} --single-branch https://github.com/Microsoft/vcpkg.git .vcpkg
+          cd .vcpkg
+          ./bootstrap-vcpkg.sh
+          cd ..
+
+      - name: Cache vcpkg
+        uses: actions/cache@v2
+        with:
+          path: |
+            ${{ github.workspace }}/.vcpkg/installed
+          key: ${{ runner.os }}-${{ matrix.config }}-${{env.VCPKG_VERSION}}-${{ hashFiles('xmake.lua') }}-${{ matrix.arch }}-v5
+
+      - name: Bundle
+        if: ${{ github.ref_name == 'master' && matrix.config == 'release' }}
+        run: |
+          xmake bundle -v -y
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+      - name: Upload template-app-macos
+        if: ${{ github.ref_name == 'master' && matrix.config == 'release' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: template-app-macos
+          path: build/template-app-macos.zip
+
+      - name: Config
+        run: |
+          xmake config -v -y -m ${{ matrix.config }} --arch=${{ matrix.arch }}
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+      - name: Build & Test
+        run: |
+          xmake test -v -y
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg

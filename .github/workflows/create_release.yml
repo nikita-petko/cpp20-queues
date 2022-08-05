@@ -1,0 +1,181 @@
+name: Create Release
+
+on:
+  push:
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+      - "xmake.lua"
+
+jobs:
+  bundle-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    if: "!contains(toJSON(github.event.commits.*.message), '[SKIP CI]')"
+    env:
+      VCPKG_VERSION: 2022.03.10
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Setup xmake
+      uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: 2.6.4
+
+    - name: Installing vcpkg
+      run: |
+        git clone -b ${{env.VCPKG_VERSION}} --single-branch https://github.com/Microsoft/vcpkg.git .vcpkg
+        cd .vcpkg
+        .\bootstrap-vcpkg.bat
+        .\vcpkg.exe integrate install
+        cd ..
+
+    - name: Cache vcpkg
+      uses: actions/cache@v2
+      with:
+        path: |
+          ${{ github.workspace }}\.vcpkg\installed
+        key: ${{ runner.os }}-release-${{env.VCPKG_VERSION}}-${{ hashFiles('xmake.lua') }}-x64-v5
+
+    - name: Bundle
+      run: |
+        xmake bundle -v -y
+      env:
+        VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+    - name: Upload template-app-win64
+      uses: actions/upload-artifact@v3
+      with:
+        name: template-app-win64
+        path: build/template-app-win64.zip
+
+  bundle-linux:
+    runs-on: ubuntu-latest
+    if: "!contains(toJSON(github.event.commits.*.message), '[SKIP CI]')"
+    timeout-minutes: 15
+    env:
+      VCPKG_VERSION: 2022.03.10
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up GCC 11
+      uses: egor-tensin/setup-gcc@v1
+      with:
+        version: 11
+        platform: x64
+
+    - name: Setup xmake
+      uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: 2.6.4
+
+    - name: Installing vcpkg
+      run: |
+        git clone -b ${{env.VCPKG_VERSION}} --single-branch https://github.com/Microsoft/vcpkg.git .vcpkg
+        cd .vcpkg
+        ./bootstrap-vcpkg.sh
+        cd ..
+    - name: Cache vcpkg
+      uses: actions/cache@v2
+      with:
+        path: |
+          ${{ github.workspace }}/.vcpkg/installed
+        key: ${{ runner.os }}-release-${{env.VCPKG_VERSION}}-${{ hashFiles('xmake.lua') }}-x64-v5
+
+    - name: Bundle
+      run: |
+        xmake bundle -v -y
+      env:
+        VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+    - name: Upload template-app-linux
+      uses: actions/upload-artifact@v3
+      with:
+        name: template-app-linux
+        path: build/template-app-linux.zip
+
+  bundle-macos:
+   runs-on: macos-latest
+   if: "!contains(toJSON(github.event.commits.*.message), '[SKIP CI]')"
+   timeout-minutes: 15
+   env:
+     VCPKG_VERSION: 2022.03.10
+
+   steps:
+   - uses: actions/checkout@v2
+
+   - name: Setup xmake
+     uses: xmake-io/github-action-setup-xmake@v1
+     with:
+       xmake-version: 2.6.4
+
+   - name: Installing vcpkg
+     run: |
+       git clone -b ${{env.VCPKG_VERSION}} --single-branch https://github.com/Microsoft/vcpkg.git .vcpkg
+       cd .vcpkg
+       ./bootstrap-vcpkg.sh
+       cd ..
+
+   - name: Cache vcpkg
+     uses: actions/cache@v2
+     with:
+       path: |
+         ${{ github.workspace }}/.vcpkg/installed
+       key: ${{ runner.os }}-release-${{env.VCPKG_VERSION}}-${{ hashFiles('xmake.lua') }}-x64-v5
+
+   - name: Bundle
+     run: |
+       xmake bundle -v -y
+     env:
+       VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+
+   - name: Upload template-app-macos
+     uses: actions/upload-artifact@v3
+     with:
+       name: template-app-macos
+       path: build/template-app-macos.zip
+
+  create-release:
+    runs-on: ubuntu-latest
+    if: "!contains(toJSON(github.event.commits.*.message), '[SKIP CI]')"
+    timeout-minutes: 5
+    needs: [bundle-linux, bundle-windows, bundle-macos]
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Download Linux artifacts
+      uses: actions/download-artifact@v1
+      with:
+        name: template-app-linux
+        path: linux
+
+    - name: Download Windows artifacts
+      uses: actions/download-artifact@v1
+      with:
+        name: template-app-win64
+        path: win64
+
+    - name: Download MacOS artifacts
+      uses: actions/download-artifact@v1
+      with:
+        name: template-app-macos
+        path: macos
+
+    - name: Create Release
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: build-${{github.run_id}}
+        generate_release_notes: true
+        draft: false
+        prerelease: ${{ github.ref_name != 'master' }}
+        files: |
+          linux/template-app-linux.zip
+          win64/template-app-win64.zip
+          macos/template-app-macos.zip
